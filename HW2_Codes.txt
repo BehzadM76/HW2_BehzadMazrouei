@@ -1,0 +1,238 @@
+#Setup PySpark & import requirements
+
+
+%%capture
+
+!apt-get update
+!apt-get install -y openjdk-8-jdk-headless -qq 
+!apt-get install maven -qq
+
+!curl -L "https://archive.apache.org/dist/spark/spark-2.4.5/spark-2.4.5-bin-hadoop2.7.tgz" > spark-2.4.5-bin-hadoop2.7.tgz
+!tar -xvf spark-2.4.5-bin-hadoop2.7.tgz
+!pip install -q findspark
+
+import os
+os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-8-openjdk-amd64"
+os.environ["SPARK_HOME"] = "/content/spark-2.4.5-bin-hadoop2.7"
+
+import findspark
+findspark.init()
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.master("local[*]").config("spark.driver.memory", "16g").getOrCreate()
+sc=spark.sparkContext
+
+
+
+#Question_1
+#1-a) Number of Products, Sales & Sellers
+
+products = spark.read.parquet("products_parquet")
+print("Number of products: " + str(products.count()))
+
+sales = spark.read.parquet("sales_parquet")
+print("Number of sales: " + str(sales.count()))
+
+sellers = spark.read.parquet("sellers_parquet")
+print("Number of sellers: " + str(sellers.count()))
+
+
+#1-b) Number of Pruducts which was sold at leats once
+
+from pyspark.sql.functions import countDistinct
+soldProducts = sales.agg(countDistinct("product_id"))
+soldProducts.show()
+
+#1-c)
+
+SoldProducts=sales.groupBy('product_id').count().collect()
+D=[(e.product_id,e['count']) for e in SoldProducts]
+sorted(D,key=lambda x:x[0], reverse=False)[:1]
+
+
+
+#Question_2
+
+from pyspark.sql.functions import countDistinct
+UniqueSoldByDay = sales.groupBy("date").agg(countDistinct("product_id")).show()
+
+
+
+#Question_3
+
+#Import requirements
+
+import sys
+
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
+from pyspark.sql.types import Row, StructField, StructType, StringType, IntegerType
+
+SqlCntxt = SQLContext(sc)
+
+#Joining sales & products tables
+
+SqlCntxt.registerDataFrameAsTable(sales,'Sales')
+SqlCntxt.registerDataFrameAsTable(products,'Products')
+
+query="""
+SELECT Sales.order_id, Sales.product_id, Sales.num_pieces_sold, Products.price
+FROM Sales
+JOIN Products ON Sales.product_id=Products.product_id
+"""
+Sales_Price=SqlCntxt.sql(query)
+Sales_Price.show()
+
+#Computing the Averages based on each order
+
+OrderValue.agg({'Total_Value':'avg'}).show()
+
+
+
+#Question_4
+
+#Joining Sales and Sellers tables
+
+SqlCntxt.registerDataFrameAsTable(sales,'Sales')
+SqlCntxt.registerDataFrameAsTable(sellers,'Sellers')
+
+query="""
+SELECT Sales.order_id, Sales.seller_id, Sales.num_pieces_sold, Sellers.daily_target
+FROM Sales
+JOIN Sellers ON Sales.seller_id=Sellers.seller_id
+"""
+Sales_Sellers=SqlCntxt.sql(query)
+Sales_Sellers.show()
+
+
+#Creating a new attribute "PercOfTarget" meaning percentage of total target for each order
+
+SqlCntxt.registerDataFrameAsTable(Sales_Sellers,'Sales_and_Sellers')
+query="""
+SELECT order_id , seller_id,
+ num_pieces_sold/daily_target*100  AS PercOfTarget
+FROM Sales_and_Sellers
+"""
+DailyTarget_Percentage=SqlCntxt.sql(query)
+DailyTarget_Percentage.show()
+
+
+#Average of percentage of target for each order for every seller 
+
+DailyTarget_Percentage.groupby('seller_id').agg({'PercOfTarget':'avg'}).show()
+
+
+
+#Question_5
+
+#5-a)
+
+#Joining Sales and Sellers tables
+
+SqlCntxt.registerDataFrameAsTable(sales,'Sales')
+SqlCntxt.registerDataFrameAsTable(sellers,'Sellers')
+
+query="""
+SELECT Sales.order_id, Sales.seller_id, Sales.num_pieces_sold, Sellers.seller_name
+FROM Sales
+JOIN Sellers ON Sales.seller_id=Sellers.seller_id
+"""
+Sales_Sellers=SqlCntxt.sql(query)
+Sales_Sellers.show()
+
+
+SqlCntxt.registerDataFrameAsTable(Sales_Sellers,'SellersTable')
+
+query="""
+SELECT seller_name , count(num_pieces_sold) AS SoldProducts
+FROM SellersTable
+GROUP BY seller_name 
+ORDER BY SoldProducts
+"""
+SellersBySell=SqlCntxt.sql(query)
+SellersBySell.show()
+
+
+#Finding 2nd Worst Seller
+
+SqlCntxt.registerDataFrameAsTable(SellersBySell,'Most_Sells')
+query="""
+Select *
+From 
+(
+    Select 
+      Row_Number() Over (Order By SoldProducts) As WorstSeller
+    , *
+    From Most_Sells
+) 
+Where WorstSeller = 2
+"""
+
+SecondWorstSeller = SqlCntxt.sql(query)
+SecondWorstSeller.show()
+
+
+#Finding 2nd Best Seller
+
+SqlCntxt.registerDataFrameAsTable(SellersBySell,'MostSells')
+query="""
+Select *
+From 
+(
+    Select 
+      Row_Number() Over (Order By SoldProducts DESC) As BestSeller
+    , *
+    From MostSells
+) 
+Where BestSeller = 2
+"""
+
+SecondBestSeller = SqlCntxt.sql(query)
+SecondBestSeller.show()
+
+
+5-b)
+
+#Joining Sales and Sellers tables
+
+SqlCntxt.registerDataFrameAsTable(sales,'Sales')
+SqlCntxt.registerDataFrameAsTable(sellers,'Sellers')
+
+query="""
+SELECT Sales.product_id, Sellers.seller_name
+FROM Sales
+JOIN Sellers ON Sales.seller_id=Sellers.seller_id
+"""
+
+SalesSellers=SqlCntxt.sql(query)
+SalesSellers.show()
+
+
+SqlCntxt.registerDataFrameAsTable(SalesSellers,'SalesSellers')
+SqlCntxt.registerDataFrameAsTable(products,'Products')
+
+query="""
+SELECT SalesSellers.seller_name, Products.product_name
+FROM SalesSellers
+JOIN Products ON Products.product_id=SalesSellers.product_id
+"""
+
+ProductSellers=SqlCntxt.sql(query)
+ProductSellers.show()
+
+
+SqlCntxt.registerDataFrameAsTable(ProductSellers,'ProductSellers')
+query="""
+SELECT DISTINCT(seller_name)
+FROM ProductSellers
+WHERE  product_name = "product_0"
+"""
+
+SellersOf_product_0=SqlCntxt.sql(query)
+SellersOf_product_0.show()
+
+
+
+#Question_6
+
+from pyspark.sql.functions import when, md5, sha2
+sales.withColumn('hashed_bill' , when(sales .order_id%2 ==0, md5('bill_raw_text')).otherwise(sha2(sales.bill_raw_text, 256))).show()
